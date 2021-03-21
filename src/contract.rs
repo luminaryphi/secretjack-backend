@@ -88,51 +88,124 @@ let dealer_max:u8 = 17;
 //Max hand Value
 const BLACKJACK:u8 = 21;
 
+//Payout Multiples
+const NAT_BLACK:f32 = 2.5;
+const NORM_PAY:f32 = 2;
 
 
 
-struct Table {
-    //Dealer hand and hand value
-    dealer_hand: Vec<u8>,
-    dealer_secret_card: u8, //Dealers opening card that stays hidden at first
-    dealer_val: u8,
 
-    dealer_ace: bool, //True if dealer has reducable ace
+//All traits for all hands dealt
+struct Hand {
+    contents: Vec<u8>,
+    val: u8,
+    ace: bool,
 
-    dealer_bust: bool,
-    dealer_stay: bool,
+    stay: bool,
+    blackjack: bool,
+    bust: bool
+}
 
-    player_address: i64,
-
-    //Player hand and hand value
-    player_hand: Vec<u8>,
-    player_val: u8,
-
-    //Tells if player has an ace that can be reduced if val is above 21
-    player_ace: bool,
-
-    //player split bool
-    //player split hand
-    //player split hand value u8
+//Takes self, and new_card, comes from car_draw() except in secret_card case
+impl Hand {
+    fn hit(&self, new_card: u8) {
+        self.contents.push(new_card);
+        self.val += cards.get(new_card);
 
 
-    player_bust: bool,
-    player_stay: bool,
-    player_blackjack: bool,
+        //ACE MANAGEMENT
+        if cards.get(new_card) == 11 && self.ace == false {
+            self.ace = true;
+        }
+        //If player already has reducable ace and recieves another, reduces first ace
+        else if self.ace == true && cards.get(new_card) == 11 {
+            self.val -= 10;
+        }
+        //If player is bust but has a usable ace, reduce
+        if self.ace == true && self.val > BLACKJACK {
+            self.val -= 10;
+            self.ace == false;
+        }
 
-    player_bet: u64,
+        //Sets possible end conditions
+        if self.val == BLACKJACK {
+            self.blackjack = true;
+        }
+        else if self.val > BLACKJACK {
+            self.bust = true;
+        }
 
-    //True if the opening hands have been drawn.
-    opening_done: bool,
+    }
 
-    //Insurance round indicator. No other actions can be called while this is true until insurance round is resolved
-    insurance_round: bool,
+    fn reset(&self) {
+        self.contents.clear();
+        self.val = 0;
+        self.ace = false;
 
+        self.stay = false;
+        self.blackjack = false;
+        self.bust = false;
+    }
+}
+
+//SUB STRUCTS
+struct Dealer {
+    hand: Hand,
+
+    secret_card: u8,
+
+}
+
+struct Player {
+    hand: Hand,
+
+    did_split: bool,
+    split_hand: Hand,
 
 }
 
 
-//Player reference and storage key
+//Sets up reset functions for player and dealer
+impl Dealer {
+    fn reset(&self) {
+        self.hand.reset();
+        self.secret_card = 0;
+    }
+}
+
+impl Player {
+    fn reset(&self) {
+        self.hand.reset();
+        self.did_split = false;
+        self.split_hand.reset();
+    }
+}
+
+
+
+//Main Table Struct
+struct Table {
+    dealer: Dealer,
+    player: Player,
+
+    //The money the player has on the line
+    wager: u64,
+
+
+    opening_done: bool,
+
+    //Insurance round indicator. No other actions can be called while this is true until insurance round is resolved
+    insurance_round: bool
+
+}
+
+
+
+
+
+
+
+//Player reference and storage key for each table
 let sender_raw = deps.api.canonical_address(&env.message.sender)?; //Grabs human address, turns it into cannonical address
 let sender_key = sender_raw.as_slice(); //Makes address into a key that storage can understand
 let mut table: Table = load(&deps.storage, sender_key)?; //Loads table from storage based on the sender_key from accessing wallet
@@ -157,34 +230,26 @@ pub fn start_round() {
 
     //Give players 2 cards
     for n in 1..=2 {
-        hit();
-
+        table.player.hand.hit(card_draw());
     }
 
-    //Dealer recieves 2 cards, one hidden
-    let new_card: u8 = card_draw();
-    table.dealer_hand.push(new_card);
-    table.dealer_val += cards.get(new_card);
 
-    if cards.get(new_card) == 11 {
-        dealer_ace = true;
-    }
 
-    //Assigns hidden card
-    table.dealer_secret_card = card_draw();
+    //Give dealer one card, then give secret card
+    table.dealer.hand.hit(car_draw());
+    table.dealer.secret_card = card_draw();
 
-    //If dealers first card is 10 value or ace, sets insurance round
-    if cards.get(new_card) == 10 || cards.get(new_card) == 11 {
+    //If value of dealers first card is 10 or 11, allow insurance option
+    if cards.get(table.dealer.hand[0]) == 10 || cards.get(table.dealer.hand[0]) == 11 {
         table.insurance_round = true;
     }
-
 
 
 
     table.opening_done = true;
 
 
-    if table.blackjack == true && table.insurance_round == false {
+    if table.player.val == BLACKJACK && table.insurance_round == false {
         dealer_turn();
     }
 
@@ -197,7 +262,7 @@ pub fn insure() {
     if table.insurance_round == true {
 
 
-        if table.dealer_val + cards.get(dealer_secret_card) == 21 {
+        if table.dealer.hand.val + cards.get(table.dealer.secret_card) == 21 {
             //Player recieves a payment equal to his wager (TODO)
             end_round();
 
@@ -209,131 +274,75 @@ pub fn insure() {
     }
 }
 
-
-//Checks if player has ended turn by staying or busting.
-fn end_check() -> bool {
-    if table.player_bust || table.player_stay {
-        return true;
-    }
-    else {
-        return false;
-    }
-}
-
-
-
-//FUNCTIONS FOR ACTIONS
-
+//Function for player that hits either his split hand or regular hand
 pub fn hit() {
-    //Adding 1 card to hand
-    let new_card: u8 = card_draw();
-    table.player_hand.push(new_card);
-    table.player_val += cards.get(new_card);
-
-
-    //ACE MANAGEMENT
-
-    //If player gets ace and doesn't have one, sets ace bool to true
-    if table.player_ace == false && cards.get(new_card) == 11 {
-        table.player_ace == true;
+    if table.player.did_split == true &&
+    table.player.split_hand.stay == false &&
+    table.player.split_hand.blackjack == false &&
+    table.player.split_hand.bust == false {
+        table.player.split_hand.hit(card_draw());
     }
-    //If player already has reducable ace and recieves another, reduces first ace
-    else if table.player_ace == true && cards.get(new_card) == 11 {
-        table.player_val -= 10;
+    else if table.player.hand.stay == false &&
+    table.player.hand.blackjack == false &&
+    table.player.hand.bust == false {
+        table.player.hand.hit(card_draw());
     }
-
-
-
-    //END CHECKS
-
-    //If player is over 21 has reducable ace, reduce, otherwise, bust
-    if player_val > BLACKJACK {
-        if table.player_ace == true {
-            player_val -= 10;
-            table.player_ace = false;
-        }
-        else {
-            table.player_bust = true;
-            end_round();
-        }
-    }
-
-
-    //Test blackjack
-    else if table.player_val == BLACKJACK {
-        //Tests for natural blackjack
-        if table.player_hand.len() == 2 {
-            table.player_blackjack = true;
-        }
-
-        if opening_done == true {
-            dealer_turn();
-        }
-    }
-
 }
+
 
 
 //Ends players turn
 pub fn stand() {
-    table.player_stay = true;
-    dealer_turn();
-
+    //If player is using split hand and hasn't already stayed it
+    if table.player.did_split == true && table.player.split_hand.stay == false {
+        table.player.split_hand.stay = true;
+    }
+    //If player is using normal hand, move to dealer turn
+    else {
+        dealer_turn();
+    }
 }
 
 
 //Player doubles bet and adds one card
 pub fn double_down() {
-    if !end_check() {
-        table.player_bet *= 2;
-        hit();
+    if table.player.hand.contents.len() == 2 {
+        table.wager *= 2;
+        table.player.hand.hit(card_draw());
         stand();
+    }
+    else {
+        //Throw error, player should not be able to double down
     }
 }
 
 
 pub fn split() {
-    //Only optional if player recieves 2 of the same card from dealer
-    //Player splits hand into 2, gives second hand an equal bet.
-    //
+    //If players first 2 cards are the same, player hasn't added cards, and hasn't already split
+    if table.player.hand.contents[0] == table.player.hand.contents[1] &&
+    table.player.did_split == false &&
+    table.player.hand.contents.len() == 2 {
+
+        table.player.did_split = true;
+
+        //Takes card from player hand, moves to split hand, sets hand to value of the one card
+        table.player.split_hand.hit(table.player.hand.contents[1]);
+        table.player.hand.contents.pop();
+        table.player.hand.val = cards.get(table.player.hand.contents[0]);
+
+    }
+
 }
 
 
 
 //Dealer takes turn
 fn dealer_turn() {
-    //Dealers secret card is added to his hand
-    table.dealer_hand.push(table.dealer_secret_card);
-    table.dealer_val += cards.get(table.dealer_secret_card);
+    //Secret card is moved into dealers hand
+    table.dealer.hand.hit(table.dealer.secret_card);
 
-    //Checks if first 2 cards are double aces and reduces before hit cycle
-    if table.dealer_ace == true && cards.get(table.dealer_secret_card) == 11 {
-        table.dealer_val -= 10;
-    }
-
-    //Hits until dealer reaches his max value
-    if table.dealer_val < table.dealer_max {
-        while table.dealer_val < table.dealer_max {
-            let new_card = card_draw();
-            table.dealer_hand.push(new_card);
-            table.dealer_val += cards.get(new_card);
-
-            //Ace management
-            //If dealer recieves second ace, reduce the first
-            if table.dealer_ace == true && cards.get(new_card) == 11 {
-                table.dealer_val -= 10;
-            }
-            //If dealer passes 21 but has reducable ace, reduce
-            else if table.dealer_ace == true && table.dealer_val > BLACKJACK {
-                table.dealer_val -= 10;
-                table.dealer_ace = false;
-            }
-
-
-        }
-        if table.dealer_val > BLACKJACK {
-            table.dealer_bust = true;
-        }
+    while table.dealer.hand.val < dealer_max {
+        table.dealer.hand.hit(card_draw);
     }
 
     end_round();
@@ -342,11 +351,6 @@ fn dealer_turn() {
 
 
 pub fn end_round() {
-    //If player bust or stand is true && dealer bust or stand is true
-        //if player is not bust && player hand value > dealer hand value || dealer is bust but player is not
-            //player wins!
-        //else if dealer is not bust and dealer hand value > player hand value || player bust but dealer is not
-            //Dealer wins
 }
 
 
@@ -383,10 +387,6 @@ fn payout (
         data: None,
     }
 }
-
-
-
-
 
 
 
