@@ -10,7 +10,31 @@ use crate::state::{config, config_read, State};
 //allows us to use hashmaps
 use std::collections::HashMap;
 
-//Allows us to abort functions
+
+
+
+//Init function must be kept
+pub fn init<S: Storage, A: Api, Q: Querier>(
+    deps: &mut Extern<S, A, Q>,
+    env: Env,
+    msg: InitMsg,
+    admin_seed: String    //Initial encryption seed passed by owner
+) -> StdResult<InitResponse> {
+    let state = State {
+        owner: deps.api.canonical_address(&env.message.sender)?,
+    };
+
+
+
+
+    config(&mut deps.storage).save(&state)?;
+
+    Ok(InitResponse::default())
+}
+
+
+
+
 
 
 
@@ -200,7 +224,17 @@ struct Table {
 }
 
 
+impl Table {
+    fn reset(&self) {
+        self.dealer.reset();
+        self.player.reset();
 
+        self.wager = 0;
+
+        self.opening_done = false;
+        self.insurance_round = false;
+    }
+}
 
 
 
@@ -213,20 +247,11 @@ let mut table: Table = load(&deps.storage, sender_key)?; //Loads table from stor
 
 
 
-//Declares all the functions that change state
-pub enum HandleMsg {
-    hit {},
-    stand {},
-    double_down {},
-    split {},
-    insurance_round {},
-    start_round {},
-
-}
-
 //Player starts with initial bet
 //give player 2 cards, dealer recieves one card. Other is hidden
 pub fn start_round() {
+    //Ensure table is clear prior to round
+    table.reset();
 
     //Give players 2 cards
     for n in 1..=2 {
@@ -390,23 +415,18 @@ fn payout (
 
 
 
+//Declares all the functions that change state
+pub enum HandleMsg {
+    hit {},
+    stand {},
+    double_down {},
+    split {},
+    insurance_round {},
+    start_round {},
 
-
-
-//Init function must be kept
-pub fn init<S: Storage, A: Api, Q: Querier>(
-    deps: &mut Extern<S, A, Q>,
-    env: Env,
-    msg: InitMsg,
-) -> StdResult<InitResponse> {
-    let state = State {
-        owner: deps.api.canonical_address(&env.message.sender)?,
-    };
-
-    config(&mut deps.storage).save(&state)?;
-
-    Ok(InitResponse::default())
 }
+
+
 
 //handle function must be kept
 pub fn handle<S: Storage, A: Api, Q: Querier>(
@@ -433,8 +453,4 @@ pub fn query<S: Storage, A: Api, Q: Querier>(
 fn query_count<S: Storage, A: Api, Q: Querier>(deps: &Extern<S, A, Q>) -> StdResult<CountResponse> {
     let state = config_read(&deps.storage).load()?;
     Ok(CountResponse { count: state.count })
-}
-
-
-
 }
