@@ -7,10 +7,11 @@ use cosmwasm_std::{
 use crate::msg::{CountResponse, HandleMsg, InitMsg, QueryMsg};
 use crate::state::{config, config_read, State};
 
-//allows us to use hashmaps
-use std::collections::HashMap;
 
 
+//These are for random num generation
+use rand_chacha::ChaChaRng;
+use rand::{RngCore, SeedableRng};
 
 
 //Init function must be kept
@@ -18,12 +19,12 @@ pub fn init<S: Storage, A: Api, Q: Querier>(
     deps: &mut Extern<S, A, Q>,
     env: Env,
     msg: InitMsg,
-    admin_seed: String    //Initial encryption seed passed by owner
 ) -> StdResult<InitResponse> {
     let state = State {
+        seed: String::from(msg.admin_seed),
         owner: deps.api.canonical_address(&env.message.sender)?,
-    };
 
+    };
 
 
 
@@ -35,114 +36,44 @@ pub fn init<S: Storage, A: Api, Q: Querier>(
 
 
 
-
-
-
-//CardID + Values (should maybe be in init function????)
-let cards = HashMap::new();
-
-
-
-
-
-//Diamonds
-cards.insert(1, 11);    //Ace
-cards.insert(2, 2);
-cards.insert(3, 3);
-cards.insert(4, 4);
-cards.insert(5, 5);
-cards.insert(6, 6);
-cards.insert(7, 7);
-cards.insert(8, 8);
-cards.insert(9, 9);
-cards.insert(10, 10);   //Ten
-cards.insert(11, 10);   //Jack
-cards.insert(12, 10);   //Queen
-cards.insert(13, 10);   //King
-
-//Hearts
-cards.insert(14, 11);   //Ace
-cards.insert(15, 2);
-cards.insert(16, 3);
-cards.insert(17, 4);
-cards.insert(18, 5);
-cards.insert(19, 6);
-cards.insert(20, 7);
-cards.insert(21, 8);
-cards.insert(22, 9);
-cards.insert(23, 10);   //Ten
-cards.insert(24, 10);   //Jack
-cards.insert(25, 10);   //Queen
-cards.insert(26, 10);   //King
-
-//Clubs
-cards.insert(27, 11);   //Ace
-cards.insert(28, 2);
-cards.insert(29, 3);
-cards.insert(30, 4);
-cards.insert(31, 5);
-cards.insert(32, 6);
-cards.insert(33, 7);
-cards.insert(34, 8);
-cards.insert(35, 9);
-cards.insert(36, 10);   //Ten
-cards.insert(37, 10);   //Jack
-cards.insert(38, 10);   //Queen
-cards.insert(39, 10);   //King
-
-//Spades
-cards.insert(40, 11); //Ace
-cards.insert(41, 2);
-cards.insert(42, 3);
-cards.insert(43, 4);
-cards.insert(44, 5);
-cards.insert(45, 6);
-cards.insert(46, 7);
-cards.insert(47, 8);
-cards.insert(48, 9);
-cards.insert(49, 10);   //Ten
-cards.insert(50, 10);   //Jack
-cards.insert(51, 10);   //Queen
-cards.insert(52, 10);   //King
-
-
 //Max value of dealer hand before they stay
-let dealer_max:u8 = 17;
+pub const DEALER_STOP:u8 = 17;
+
 
 //Max hand Value
-const BLACKJACK:u8 = 21;
+pub const BLACKJACK:u8 = 21;
 
 //Payout Multiples
-const NAT_BLACK:f32 = 2.5;
-const NORM_PAY:f32 = 2;
+pub const NAT_BLACK:f32 = 2.5;
+pub const NORM_PAY:f32 = 2;
 
 
 
 
 //All traits for all hands dealt
 struct Hand {
-    contents: Vec<u8>,
-    val: u8,
-    ace: bool,
+    pub contents: Vec<u8>,
+    pub val: u8,
+    pub ace: bool,
 
-    stay: bool,
-    blackjack: bool,
-    bust: bool
+    pub stay: bool,
+    pub blackjack: bool,
+    pub bust: bool
 }
 
 //Takes self, and new_card, comes from car_draw() except in secret_card case
 impl Hand {
     fn hit(&self, new_card: u8) {
         self.contents.push(new_card);
-        self.val += cards.get(new_card);
+        self.val += card_value(new_card);
 
 
         //ACE MANAGEMENT
-        if cards.get(new_card) == 11 && self.ace == false {
+        if card_value(new_card) == 11 && self.ace == false {
             self.ace = true;
         }
         //If player already has reducable ace and recieves another, reduces first ace
-        else if self.ace == true && cards.get(new_card) == 11 {
+        else if self.ace == true && card_value(new_card) == 11 {
             self.val -= 10;
         }
         //If player is bust but has a usable ace, reduce
@@ -174,17 +105,17 @@ impl Hand {
 
 //SUB STRUCTS
 struct Dealer {
-    hand: Hand,
+    pub hand: Hand,
 
-    secret_card: u8,
+    pub secret_card: u8,
 
 }
 
 struct Player {
-    hand: Hand,
+    pub hand: Hand,
 
-    did_split: bool,
-    split_hand: Hand,
+    pub did_split: bool,
+    pub split_hand: Hand,
 
 }
 
@@ -209,17 +140,17 @@ impl Player {
 
 //Main Table Struct
 struct Table {
-    dealer: Dealer,
-    player: Player,
+    pub dealer: Dealer,
+    pub player: Player,
 
     //The money the player has on the line
-    wager: u64,
+    pub wager: u64,
 
 
-    opening_done: bool,
+    pub opening_done: bool,
 
     //Insurance round indicator. No other actions can be called while this is true until insurance round is resolved
-    insurance_round: bool
+    pub insurance_round: bool
 
 }
 
@@ -265,7 +196,7 @@ pub fn start_round() {
     table.dealer.secret_card = card_draw();
 
     //If value of dealers first card is 10 or 11, allow insurance option
-    if cards.get(table.dealer.hand[0]) == 10 || cards.get(table.dealer.hand[0]) == 11 {
+    if card_value(table.dealer.hand[0]) == 10 || card_value(table.dealer.hand[0]) == 11 {
         table.insurance_round = true;
     }
 
@@ -275,7 +206,27 @@ pub fn start_round() {
 
 
     if table.player.val == BLACKJACK && table.insurance_round == false {
-        dealer_turn();
+        end_round();
+    }
+
+    else {
+    //Returns game state after opening
+    Ok(HandleResponse {
+        messages: vec![],
+        log: vec![],
+        data: Some(to_binary(&HandleAnswer::Open {
+            player_hand: table.player.hand.contens,
+            player_val: table.player.hand.val,
+
+            dealer_hand: table.dealer.hand.contents,
+            dealer_val: table.dealer.hand.val,
+
+
+            insureable: table.insurance_round,
+
+
+            })?),
+        })
     }
 
 }
@@ -287,17 +238,68 @@ pub fn insure() {
     if table.insurance_round == true {
 
 
-        if table.dealer.hand.val + cards.get(table.dealer.secret_card) == 21 {
+        //Dealer has blackjack
+        if table.dealer.hand.val + card_value(table.dealer.secret_card) == 21 {
+            //Shows secret card
+            table.dealer.hand.hit(table.dealer.secret_card);
             //Player recieves a payment equal to his wager (TODO)
             end_round();
 
         }
+
+        //Dealer didnt have blackjack
+        else {
         table.insurance_round == false;
+
+            //Returns Game state
+            Ok(HandleResponse {
+                messages: vec![],
+                log: vec![],
+                data: Some(to_binary(&HandleAnswer::Insure {
+
+                })?),
+            })
+        }
     }
     else {
         //Throw error. Player cannot place insurance
     }
 }
+
+//If insurance round is called, player is given option to pass up insurance
+pub fn dont_insure() {
+    if table.insurance_round == true {
+
+        //Dealer has blackjack
+        if table.dealer.hand.val + card_value(table.dealer.secret_card) == 21 {
+            //Shows secret card
+            table.dealer.hand.hit(table.dealer.secret_card);
+            //Player recieves a payment equal to his wager (TODO)
+            end_round();
+
+        }
+
+        //Dealer Didn't have blackjack
+        else {
+        table.insurance_round == false;
+
+            //Returns Game state
+            Ok(HandleResponse {
+                messages: vec![],
+                log: vec![],
+                data: Some(to_binary(&HandleAnswer::Insure {
+
+                })?),
+            })
+        }
+    }
+    else {
+        //Throw error. Player cannot place insurance
+    }
+}
+
+
+
 
 //Function for player that hits either his split hand or regular hand
 pub fn hit() {
@@ -306,12 +308,48 @@ pub fn hit() {
     table.player.split_hand.blackjack == false &&
     table.player.split_hand.bust == false {
         table.player.split_hand.hit(card_draw());
+
+        //Returns last card in split hand and new split val
+        Ok(HandleResponse {
+            messages: vec![],
+            log: vec![],
+            data: Some(to_binary(&HandleAnswer::Hit {
+                new_card: table.player.split_hand.contents[(table.player.split_hand.contents.len())-1],
+                new_val: table.player.split_hand.val,
+
+                which_hand: true,   //true means this came from split hand
+
+            })?),
+        })
+
+
+
+
     }
     else if table.player.hand.stay == false &&
     table.player.hand.blackjack == false &&
     table.player.hand.bust == false {
         table.player.hand.hit(card_draw());
+
+        //Returns last card in normal hand and new hand value
+        Ok(HandleResponse {
+            messages: vec![],
+            log: vec![],
+            data: Some(to_binary(&HandleAnswer::Hit {
+                new_card: table.player.split_hand.contents[(table.player.split_hand.contents.len())-1],
+                new_val: table.player.split_hand.val,
+
+                which_hand: false   //False means this came from normal hand
+            })?),
+        })
+
+        //If player busts or reaches 21, call dealer turn
+        if table.player.hand.val >= BLACKJACK {
+            dealer_turn()
+        }
+
     }
+
 }
 
 
@@ -326,6 +364,8 @@ pub fn stand() {
     else {
         dealer_turn();
     }
+
+
 }
 
 
@@ -335,7 +375,18 @@ pub fn double_down() {
         table.wager *= 2;
         table.player.hand.hit(card_draw());
         stand();
+
+
+        //Returns game state through handle answer
+        Ok(HandleResponse {
+        messages: vec![],
+        log: vec![],
+        data: Some(to_binary(&HandleAnswer::Read {
+            table
+            })?),
+        })
     }
+
     else {
         //Throw error, player should not be able to double down
     }
@@ -353,7 +404,21 @@ pub fn split() {
         //Takes card from player hand, moves to split hand, sets hand to value of the one card
         table.player.split_hand.hit(table.player.hand.contents[1]);
         table.player.hand.contents.pop();
-        table.player.hand.val = cards.get(table.player.hand.contents[0]);
+        table.player.hand.val = card_value(table.player.hand.contents[0]);
+
+
+        //Returns the value and contents of normal and split hands
+        Ok(HandleResponse {
+        messages: vec![],
+        log: vec![],
+        data: Some(to_binary(&HandleAnswer::Read {
+            player_hand: table.player.hand.contents,
+            player_val: table.player.hand.val,
+
+            split_hand: table.player.split_hand.contents,
+            split_val: table.player.split_hand.val
+            })?),
+        })
 
     }
 
@@ -366,7 +431,9 @@ fn dealer_turn() {
     //Secret card is moved into dealers hand
     table.dealer.hand.hit(table.dealer.secret_card);
 
-    while table.dealer.hand.val < dealer_max {
+    //Dealer will stop on 18 and also 17 if he doesn't have an ace
+    while (table.dealer.hand.val < DEALER_STOP) ||
+    (table.dealer.hand.val <= DEALER_STOP && table.dealer.hand.ace == true) {
         table.dealer.hand.hit(card_draw);
     }
 
@@ -376,14 +443,90 @@ fn dealer_turn() {
 
 
 pub fn end_round() {
+
+
+
+
+    //Player gets blackjack and dealer does not
+    if table.player.hand.blackjack == true && table.dealer.hand.blackjack == false {
+
+    }
+
+    //Player and dealer both have blackjack, player gets money back
+    else if table.player.hand.blackjack == true && table.dealer.blackjack == true {
+
+    }
+
+    //Non blackjack wins count. Winning hands used as a multiple for winnings if player split
+    else {
+        let mut wining_hands: u8 = 0;
+
+        //Split hand win > dealer and not bust or dealer bust and player didn't
+        if (table.player.did_split == true &&
+            table.player.split_hand.val > table.dealer.hand.val &&
+            table.player.split_hand.bust == false) ||
+            (table.dealer.hand.bust == true &&
+                table.player.split_hand.bust == false) {
+                    winning_hands += 1;
+        }
+
+
+        //Regular hand win
+        if (table.player.hand.val > table.dealer.hand.val &&
+            table.player.hand.bust == false) ||
+            (table.dealer.hand.bust == true && table.player.hand.bust == false) {
+                winning hands += 1;
+            }
+
+
+    }
+
+
+
+
+
+
+    //Returns the cards drawn by the dealer and end game result
+    Ok(HandleResponse {
+    messages: vec![],
+    log: vec![],
+    data: Some(to_binary(&HandleAnswer::Read {
+        player_hand: table.player.hand.contents,
+        player_val: table.player.hand.val,
+
+        split_hand: table.player.split_hand.contents,
+        split_val: table.player.split_hand.val
+        })?),
+    })
+
 }
+
+
 
 
 //generates a random number between 1-52, returns a u8
 fn card_draw() -> u8 {
+    let random_seed: [u8; 32] = Sha256::digest(state.seed).into();
+    let mut rng = ChaChaRng::from_seed(random_seed);
+
+    return ((rng.next_u32() % 52) as u8); // a number between 0 and 51
 
 }
 
+pub fn card_value(card: u8) -> u8 {
+    //Reduces out card suits
+    card = (card + 13) % 13;
+    let card_val: u8;
+
+    match card {
+        0 => card_val = 11, //Aces
+        1..=9 => card_val = card + 1, //Cards 2 - 10
+        10 | 11 | 12 => card_val = 10,
+    }
+
+    return card_val;
+
+}
 
 
 
@@ -415,18 +558,6 @@ fn payout (
 
 
 
-//Declares all the functions that change state
-pub enum HandleMsg {
-    hit {},
-    stand {},
-    double_down {},
-    split {},
-    insurance_round {},
-    start_round {},
-
-}
-
-
 
 //handle function must be kept
 pub fn handle<S: Storage, A: Api, Q: Querier>(
@@ -435,10 +566,17 @@ pub fn handle<S: Storage, A: Api, Q: Querier>(
     msg: HandleMsg,
 ) -> StdResult<HandleResponse> {
     match msg {
-        HandleMsg::Increment {} => try_increment(deps, env),
-        HandleMsg::Reset { count } => try_reset(deps, env, count),
+        HandleMsg::Hit { } => hit(deps, env),
+        HandleMsg::Stand { } => stand(deps, env),
+        HandleMsg::Double_Down { } => double_down(deps, env),
+        HandleMsg::Split { } => split(deps, env),
+        HandleMsg::Start_Round { } => start_round(deps, env),
+        HandleMsg::Insure { } => insure(deps, env),
+        HandleMsg::Dont_Insure { } => dont_insure(deps, env),
+
     }
 }
+
 
 //query functions must be kept
 pub fn query<S: Storage, A: Api, Q: Querier>(
@@ -446,11 +584,12 @@ pub fn query<S: Storage, A: Api, Q: Querier>(
     msg: QueryMsg,
 ) -> StdResult<Binary> {
     match msg {
-        QueryMsg::GetCount {} => to_binary(&query_count(deps)?),
+        //QueryMsg::GetCount {} => to_binary(&query_count(deps)?),
     }
 }
-
+/*
 fn query_count<S: Storage, A: Api, Q: Querier>(deps: &Extern<S, A, Q>) -> StdResult<CountResponse> {
     let state = config_read(&deps.storage).load()?;
     Ok(CountResponse { count: state.count })
 }
+*/
