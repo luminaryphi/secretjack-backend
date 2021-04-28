@@ -47,6 +47,8 @@ pub const BLACKJACK:u8 = 21;
 pub const NAT_BLACK:f32 = 2.5;
 pub const NORM_PAY:f32 = 2;
 
+//Charlie victory constant
+pub const CHARLIE:u8 = 6;
 
 
 
@@ -89,6 +91,7 @@ impl Hand {
         else if self.val > BLACKJACK {
             self.bust = true;
         }
+
 
     }
 
@@ -146,11 +149,16 @@ struct Table {
     //The money the player has on the line
     pub wager: u64,
 
+    //players burner wallet
+    wallet: u64,
+
 
     pub opening_done: bool,
 
     //Insurance round indicator. No other actions can be called while this is true until insurance round is resolved
-    pub insurance_round: bool
+    pub insurance_round: bool,
+
+
 
 }
 
@@ -164,6 +172,7 @@ impl Table {
 
         self.opening_done = false;
         self.insurance_round = false;
+
     }
 }
 
@@ -174,6 +183,20 @@ impl Table {
 let sender_raw = deps.api.canonical_address(&env.message.sender)?; //Grabs human address, turns it into cannonical address
 let sender_key = sender_raw.as_slice(); //Makes address into a key that storage can understand
 let mut table: Table = load(&deps.storage, sender_key)?; //Loads table from storage based on the sender_key from accessing wallet
+
+
+
+//Deposit to burner wallet in contract
+pub fn deposit() {
+
+}
+
+//Withdraw from burner wallet in contract
+pub fn withdraw() {
+
+}
+
+
 
 
 
@@ -215,7 +238,7 @@ pub fn start_round() {
         messages: vec![],
         log: vec![],
         data: Some(to_binary(&HandleAnswer::Open {
-            player_hand: table.player.hand.contens,
+            player_hand: table.player.hand.contents,
             player_val: table.player.hand.val,
 
             dealer_hand: table.dealer.hand.contents,
@@ -303,10 +326,12 @@ pub fn dont_insure() {
 
 //Function for player that hits either his split hand or regular hand
 pub fn hit() {
+
+    //Split hand hit
     if table.player.did_split == true &&
     table.player.split_hand.stay == false &&
-    table.player.split_hand.blackjack == false &&
-    table.player.split_hand.bust == false {
+    table.player.split_hand.val < BLACKJACK  &&
+    table.player.split_hand.contents.len() < CHARLIE {
         table.player.split_hand.hit(card_draw());
 
         //Returns last card in split hand and new split val
@@ -327,8 +352,8 @@ pub fn hit() {
 
     }
     else if table.player.hand.stay == false &&
-    table.player.hand.blackjack == false &&
-    table.player.hand.bust == false {
+    table.player.hand.val < BLACKJACK &&
+    table.player.hand.contents.len() < CHARLIE {
         table.player.hand.hit(card_draw());
 
         //Returns last card in normal hand and new hand value
@@ -343,9 +368,10 @@ pub fn hit() {
             })?),
         })
 
-        //If player busts or reaches 21, call dealer turn
-        if table.player.hand.val >= BLACKJACK {
-            dealer_turn()
+        //If player main hand busts or reaches 21 or CHARLIE, call dealer turn
+        if table.player.hand.val >= BLACKJACK ||
+        table.player.hand.contents.len() >= CHARLIE {
+            dealer_turn();
         }
 
     }
@@ -375,16 +401,7 @@ pub fn double_down() {
         table.wager *= 2;
         table.player.hand.hit(card_draw());
         stand();
-
-
-        //Returns game state through handle answer
-        Ok(HandleResponse {
-        messages: vec![],
-        log: vec![],
-        data: Some(to_binary(&HandleAnswer::Read {
-            table
-            })?),
-        })
+        //Handle answer will occur in in end_round
     }
 
     else {
@@ -395,7 +412,7 @@ pub fn double_down() {
 
 pub fn split() {
     //If players first 2 cards are the same, player hasn't added cards, and hasn't already split
-    if table.player.hand.contents[0] == table.player.hand.contents[1] &&
+    if card_value(table.player.hand.contents[0]) == card_value(table.player.hand.contents[1]) &&
     table.player.did_split == false &&
     table.player.hand.contents.len() == 2 {
 
@@ -405,6 +422,10 @@ pub fn split() {
         table.player.split_hand.hit(table.player.hand.contents[1]);
         table.player.hand.contents.pop();
         table.player.hand.val = card_value(table.player.hand.contents[0]);
+
+        //Adds one card to each hand
+        table.player.split_hand.hit(card_draw());
+        table.player.hand.hit(card_draw());
 
 
         //Returns the value and contents of normal and split hands
@@ -449,12 +470,12 @@ pub fn end_round() {
 
     //Player gets blackjack and dealer does not
     if table.player.hand.blackjack == true && table.dealer.hand.blackjack == false {
-
+        payout(INSERTCONTRACTADDRESS, &env.message.sender, table.wager * NAT_BLACK);
     }
 
     //Player and dealer both have blackjack, player gets money back
     else if table.player.hand.blackjack == true && table.dealer.blackjack == true {
-
+        payout(INSERTCONTRACTADDRESS, &env.message.sender, table.wager);
     }
 
     //Non blackjack wins count. Winning hands used as a multiple for winnings if player split
@@ -478,6 +499,16 @@ pub fn end_round() {
                 winning hands += 1;
             }
 
+        //Player has 1 or two normal wins
+        if winning_hands > 0 {
+            payout(INSERTCONTRACTADDRESS, &env.message.sender, table.wager * NORM_PAY * winning_hands);
+
+        }
+
+        //Player Lost
+        else {
+
+        }
 
     }
 
@@ -490,12 +521,10 @@ pub fn end_round() {
     Ok(HandleResponse {
     messages: vec![],
     log: vec![],
-    data: Some(to_binary(&HandleAnswer::Read {
-        player_hand: table.player.hand.contents,
-        player_val: table.player.hand.val,
+    data: Some(to_binary(&HandleAnswer::Conclude {
+        dealer_hand: table.dealer.hand,
+        dealer_val: table.dealer.val,
 
-        split_hand: table.player.split_hand.contents,
-        split_val: table.player.split_hand.val
         })?),
     })
 
@@ -534,13 +563,13 @@ pub fn card_value(card: u8) -> u8 {
 
 // PAYMENT functions
 
-//Player recieves money
+//Player recieves money THIS IS NO LONGER NECESSARY! FUNCTIONS ARE NOW IN ENDGAME AND WITHDRAW!!!
 
 //Takes to/from addresses and amount
 fn payout (
     contract_address: HumanAddr,
     player_address: HumanAddr,
-    ammount: uint128,
+    ammount: Uint128,
 ) -> HandleResponse {
     HandleResponse {
         messages: vec![CosmosMsg::Bank(BankMsg::Send {
