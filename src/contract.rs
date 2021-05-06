@@ -59,8 +59,6 @@ struct Hand {
     pub ace: bool,
 
     pub stay: bool,
-    pub blackjack: bool,
-    pub bust: bool
 }
 
 //Takes self, and new_card, comes from car_draw() except in secret_card case
@@ -84,14 +82,6 @@ impl Hand {
             self.ace == false;
         }
 
-        //Sets possible end conditions
-        if self.val == BLACKJACK {
-            self.blackjack = true;
-        }
-        else if self.val > BLACKJACK {
-            self.bust = true;
-        }
-
 
     }
 
@@ -101,9 +91,8 @@ impl Hand {
         self.ace = false;
 
         self.stay = false;
-        self.blackjack = false;
-        self.bust = false;
     }
+
 }
 
 //SUB STRUCTS
@@ -388,6 +377,7 @@ pub fn stand() {
     }
     //If player is using normal hand, move to dealer turn
     else {
+        table.player.hand.stay = true;
         dealer_turn();
     }
 
@@ -405,7 +395,7 @@ pub fn double_down() {
     }
 
     else {
-        //Throw error, player should not be able to double down
+        return Err(StdError::generic_err("You Can't Double Down Now!"));
     }
 }
 
@@ -469,12 +459,20 @@ pub fn end_round() {
 
 
     //Player gets blackjack and dealer does not
-    if table.player.hand.blackjack == true && table.dealer.hand.blackjack == false {
+    if (table.player.hand.val == 21 &&
+    table.player.hand.contents.len() == 2 &&
+    table.player.did_split == false) &&
+    (table.dealer.hand.val != 21 ||
+    table.dealer.hand.contents.len() != 2) {
         payout(INSERTCONTRACTADDRESS, &env.message.sender, table.wager * NAT_BLACK);
     }
 
     //Player and dealer both have blackjack, player gets money back
-    else if table.player.hand.blackjack == true && table.dealer.blackjack == true {
+    else if (table.player.hand.val == 21 &&
+    table.player.hand.contents.len() == 2
+    table.player.did_split == false) &&
+    (table.dealer.hand.val == 21 &&
+    table.dealer.hand.contents.len() == 2) {
         payout(INSERTCONTRACTADDRESS, &env.message.sender, table.wager);
     }
 
@@ -483,19 +481,24 @@ pub fn end_round() {
         let mut wining_hands: u8 = 0;
 
         //Split hand win > dealer and not bust or dealer bust and player didn't
-        if (table.player.did_split == true &&
+        if (table.player.did_split == true &&                           //Player Hand > Dealer Hand Win
             table.player.split_hand.val > table.dealer.hand.val &&
-            table.player.split_hand.bust == false) ||
-            (table.dealer.hand.bust == true &&
-                table.player.split_hand.bust == false) {
+            table.player.split_hand.val <= BLACKJACK) ||
+            (table.dealer.hand.val > BLACKJACK &&                       //Dealer Bust / Player Didn't Win
+            table.player.split_hand.val <= BLACKJACK) ||
+            (table.player.split_hand.val <= BLACKJACK &&                //CHARLIE Win
+            table.player.split_hand.contents.len() >= CHARLIE) {
                     winning_hands += 1;
         }
 
 
         //Regular hand win
-        if (table.player.hand.val > table.dealer.hand.val &&
-            table.player.hand.bust == false) ||
-            (table.dealer.hand.bust == true && table.player.hand.bust == false) {
+        if (table.player.hand.val > table.dealer.hand.val &&    //Player Hand > Dealer Hand Win
+            table.player.hand.val <= BLACKJACK) ||
+            (table.dealer.hand.val > BLACKJACK &&               //Dealer Bust / Player Didn't Win
+             table.player.hand.val <= BLACKJACK) ||
+             (table.player.hand.val <= BLACKJACK &&             //CHARLIE Win
+             table.player.hand.contents.len() >= CHARLIE) {
                 winning hands += 1;
             }
 
