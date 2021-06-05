@@ -1,8 +1,5 @@
 //cosmwasm_std must be kept
-use cosmwasm_std::{
-    to_binary, Api, Binary, Env, Extern, HandleResponse, InitResponse, Querier, StdError,
-    StdResult, Storage,
-};
+use cosmwasm_std::{Api, Binary, Env, Extern, HandleResponse, HandleResult, InitResponse, Querier, StdError, StdResult, Storage, to_binary};
 
 use crate::msg::{CountResponse, HandleMsg, InitMsg, QueryMsg};
 use crate::state::{config, config_read, State};
@@ -14,7 +11,7 @@ use rand_chacha::ChaChaRng;
 use rand::{RngCore, SeedableRng};
 
 
-//Init function must be kept
+//Init contains admin seed and contract owner inf
 pub fn init<S: Storage, A: Api, Q: Querier>(
     deps: &mut Extern<S, A, Q>,
     env: Env,
@@ -175,15 +172,29 @@ let mut table: Table = load(&deps.storage, sender_key)?; //Loads table from stor
 
 
 
-//Deposit to burner wallet in contract
-pub fn deposit() {
+//Sending money to game check, ensures everything is correct for wagers/insurance/doubling down etc
+pub fn deposit_check(env: &Env, required_amount: u64, max_bet: u64) -> StdResult<u64> {
+    let deposit: Uint128;
+
+    if env.message.sent_funds.len() == 0 {
+        return Err(StdError::generic_err("TRANSACTION NOT MADE!"));
+    } else {
+        if env.message.sent_funds[0].denom != "uscrt" {
+            return Err(StdError::generic_err("YOU'VE USED THE WRONG CURRENCY!"));
+        }
+        deposit = env.message.sent_funds[0].amount;
+
+        if deposit.u128() as u64 < required_amount {
+            return Err(StdError::generic_err("NOT ENOUGH FUNDS SENT!"));
+        }
+        if deposit.u128() as u64 > max_bet {
+            return Err(StdError::generic_err("YOU CAN'T WAGER THAT MUCH!"));
+        }
+    }
 
 }
 
-//Withdraw from burner wallet in contract
-pub fn withdraw() {
 
-}
 
 
 
@@ -193,6 +204,11 @@ pub fn withdraw() {
 //Player starts with initial bet
 //give player 2 cards, dealer recieves one card. Other is hidden
 pub fn start_round() {
+
+    //Checks if player wagered within allowed range
+    deposit_check(env, required_amount, max_bet);
+
+
     //Ensure table is clear prior to round
     table.reset();
 
@@ -274,7 +290,7 @@ pub fn insure() {
         }
     }
     else {
-        //Throw error. Player cannot place insurance
+        //Throw error. Player cannot place insurance ( TODO )
     }
 }
 
@@ -286,7 +302,7 @@ pub fn dont_insure() {
         if table.dealer.hand.val + card_value(table.dealer.secret_card) == 21 {
             //Shows secret card
             table.dealer.hand.hit(table.dealer.secret_card);
-            //Player recieves a payment equal to his wager (TODO)
+            //Player recieves a payment equal to his wager ( TODO )
             end_round();
 
         }
@@ -305,9 +321,7 @@ pub fn dont_insure() {
             })
         }
     }
-    else {
-        //Throw error. Player cannot place insurance
-    }
+
 }
 
 
@@ -316,8 +330,13 @@ pub fn dont_insure() {
 //Function for player that hits either his split hand or regular hand
 pub fn hit() {
 
+    //Check if insurance round needs to be resolved
+    if table.insurance_round == true {
+        //Return an error ( TODO )
+    }
+
     //Split hand hit
-    if table.player.did_split == true &&
+    else if table.player.did_split == true &&
     table.player.split_hand.stay == false &&
     table.player.split_hand.val < BLACKJACK  &&
     table.player.split_hand.contents.len() < CHARLIE {
@@ -371,6 +390,13 @@ pub fn hit() {
 
 //Ends players turn
 pub fn stand() {
+
+    //Check if insurance round needs to be resolved
+    if table.insurance_round == true {
+        //Return an error ( TODO )
+    }
+
+
     //If player is using split hand and hasn't already stayed it
     if table.player.did_split == true && table.player.split_hand.stay == false {
         table.player.split_hand.stay = true;
@@ -387,7 +413,15 @@ pub fn stand() {
 
 //Player doubles bet and adds one card
 pub fn double_down() {
-    if table.player.hand.contents.len() == 2 {
+
+    //Check if insurance round needs to be resolved
+    if table.insurance_round == true {
+        //Return an error ( TODO )
+    }
+
+
+
+    else if table.player.hand.contents.len() == 2 {
         table.wager *= 2;
         table.player.hand.hit(card_draw());
         stand();
@@ -401,6 +435,14 @@ pub fn double_down() {
 
 
 pub fn split() {
+
+    //Check if insurance round needs to be resolved
+    if table.insurance_round == true {
+        //Return an error ( TODO )
+    }
+
+
+
     //If players first 2 cards are the same, player hasn't added cards, and hasn't already split
     if card_value(table.player.hand.contents[0]) == card_value(table.player.hand.contents[1]) &&
     table.player.did_split == false &&
@@ -453,7 +495,7 @@ fn dealer_turn() {
 
 
 
-pub fn end_round() {
+fn end_round() {
 
 
 
@@ -469,7 +511,7 @@ pub fn end_round() {
 
     //Player and dealer both have blackjack, player gets money back
     else if (table.player.hand.val == 21 &&
-    table.player.hand.contents.len() == 2
+    table.player.hand.contents.len() == 2 &&
     table.player.did_split == false) &&
     (table.dealer.hand.val == 21 &&
     table.dealer.hand.contents.len() == 2) {
@@ -499,7 +541,7 @@ pub fn end_round() {
              table.player.hand.val <= BLACKJACK) ||
              (table.player.hand.val <= BLACKJACK &&             //CHARLIE Win
              table.player.hand.contents.len() >= CHARLIE) {
-                winning hands += 1;
+                winning_hands += 1;
             }
 
         //Player has 1 or two normal wins
@@ -545,7 +587,7 @@ fn card_draw() -> u8 {
 
 }
 
-pub fn card_value(card: u8) -> u8 {
+fn card_value(card: u8) -> u8 {
     //Reduces out card suits
     card = (card + 13) % 13;
     let card_val: u8;
@@ -608,20 +650,3 @@ pub fn handle<S: Storage, A: Api, Q: Querier>(
 
     }
 }
-
-
-//query functions must be kept
-pub fn query<S: Storage, A: Api, Q: Querier>(
-    deps: &Extern<S, A, Q>,
-    msg: QueryMsg,
-) -> StdResult<Binary> {
-    match msg {
-        //QueryMsg::GetCount {} => to_binary(&query_count(deps)?),
-    }
-}
-/*
-fn query_count<S: Storage, A: Api, Q: Querier>(deps: &Extern<S, A, Q>) -> StdResult<CountResponse> {
-    let state = config_read(&deps.storage).load()?;
-    Ok(CountResponse { count: state.count })
-}
-*/
