@@ -266,6 +266,10 @@ pub fn insure() {
     if table.insurance_round == true {
 
 
+        //Checks if player insurance is the correct amount
+        deposit_check(env, table.wager/2, table.wager/2);
+
+
         //Dealer has blackjack
         if table.dealer.hand.val + card_value(table.dealer.secret_card) == 21 {
             //Shows secret card
@@ -290,7 +294,7 @@ pub fn insure() {
         }
     }
     else {
-        //Throw error. Player cannot place insurance ( TODO )
+        return Err(StdError::generic_err("YOU CAN'T INSURE NOW"));
     }
 }
 
@@ -332,7 +336,7 @@ pub fn hit() {
 
     //Check if insurance round needs to be resolved
     if table.insurance_round == true {
-        //Return an error ( TODO )
+        return Err(StdError::generic_err("INSURANCE ROUND MUST BE RESOLVED!"));
     }
 
     //Split hand hit
@@ -393,7 +397,7 @@ pub fn stand() {
 
     //Check if insurance round needs to be resolved
     if table.insurance_round == true {
-        //Return an error ( TODO )
+        return Err(StdError::generic_err("INSURANCE ROUND MUST BE RESOLVED!"));
     }
 
 
@@ -416,9 +420,12 @@ pub fn double_down() {
 
     //Check if insurance round needs to be resolved
     if table.insurance_round == true {
-        //Return an error ( TODO )
+        return Err(StdError::generic_err("INSURANCE ROUND MUST BE RESOLVED!"));
     }
 
+
+    //Checks if player sent the appropriate amount
+    deposit_check(env, table.wager, table.wager/2);
 
 
     else if table.player.hand.contents.len() == 2 {
@@ -429,7 +436,7 @@ pub fn double_down() {
     }
 
     else {
-        return Err(StdError::generic_err("You Can't Double Down Now!"));
+        return Err(StdError::generic_err("YOU CAN'T DOUBLE DOWN NOW!"));
     }
 }
 
@@ -438,7 +445,7 @@ pub fn split() {
 
     //Check if insurance round needs to be resolved
     if table.insurance_round == true {
-        //Return an error ( TODO )
+        return Err(StdError::generic_err("INSURANCE ROUND MUST BE RESOLVED!"));
     }
 
 
