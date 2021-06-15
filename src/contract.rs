@@ -165,12 +165,6 @@ impl Table {
 
 
 
-//Player reference and storage key for each table
-let sender_raw = deps.api.canonical_address(&env.message.sender)?; //Grabs human address, turns it into cannonical address
-let sender_key = sender_raw.as_slice(); //Makes address into a key that storage can understand
-let mut table: Table = load(&deps.storage, sender_key)?; //Loads table from storage based on the sender_key from accessing wallet
-
-
 
 //Sending money to game check, ensures everything is correct for wagers/insurance/doubling down etc
 pub fn deposit_check(env: &Env, required_amount: u64, max_bet: u64) -> StdResult<u64> {
@@ -203,28 +197,39 @@ pub fn deposit_check(env: &Env, required_amount: u64, max_bet: u64) -> StdResult
 
 //Player starts with initial bet
 //give player 2 cards, dealer recieves one card. Other is hidden
-pub fn start_round() {
+pub fn start_round(
+    deps: &mut Extern<S, A, Q>,
+    env: Env,
+) -> HandleResult {
+
+    //STAND IN FOR MAX_BET AND REQUIRED_AMOUNT
+    let required_amount = 1;
+    let max_bet = 1;
 
     //Checks if player wagered within allowed range
-    deposit_check(env, required_amount, max_bet);
+    deposit_check(&env, required_amount, max_bet);
 
+    //Load Table from sender waller address
+    let sender_raw = deps.api.canonical_address(&env.message.sender)?; //Grabs human address, turns it into cannonical address
+    let sender_key = sender_raw.as_slice(); //Makes address into a key that storage can understand
+    let mut table: Table = load(&deps.storage, sender_key)?; //Loads table from storage based on the sender_key from accessing wallet
 
     //Ensure table is clear prior to round
     table.reset();
 
     //Give players 2 cards
     for n in 1..=2 {
-        table.player.hand.hit(card_draw());
+        table.player.hand.hit(card_draw(&env));
     }
 
 
 
     //Give dealer one card, then give secret card
-    table.dealer.hand.hit(car_draw());
-    table.dealer.secret_card = card_draw();
+    table.dealer.hand.hit(card_draw(&env));
+    table.dealer.secret_card = card_draw(&env);
 
     //If value of dealers first card is 10 or 11, allow insurance option
-    if card_value(table.dealer.hand[0]) == 10 || card_value(table.dealer.hand[0]) == 11 {
+    if card_value(table.dealer.hand.contents[0]) == 11 {
         table.insurance_round = true;
     }
 
@@ -233,13 +238,13 @@ pub fn start_round() {
     table.opening_done = true;
 
 
-    if table.player.val == BLACKJACK && table.insurance_round == false {
+    if table.player.hand.val == BLACKJACK && table.insurance_round == false {
         end_round();
     }
 
     else {
     //Returns game state after opening
-    Ok(HandleResponse {
+    return Ok(HandleResponse {
         messages: vec![],
         log: vec![],
         data: Some(to_binary(&HandleAnswer::Open {
@@ -262,12 +267,22 @@ pub fn start_round() {
 
 //Insurance Round. Can only be called if insurance_round == true
 //Player must pay in half his wager
-pub fn insure() {
+pub fn insure(
+    deps: &mut Extern<S, A, Q>,
+    env: Env,
+) -> HandleResult {
+
+    //Load Table from sender waller address
+    let sender_raw = deps.api.canonical_address(&env.message.sender)?; //Grabs human address, turns it into cannonical address
+    let sender_key = sender_raw.as_slice(); //Makes address into a key that storage can understand
+    let mut table: Table = load(&deps.storage, sender_key)?; //Loads table from storage based on the sender_key from accessing wallet
+
+
     if table.insurance_round == true {
 
 
         //Checks if player insurance is the correct amount
-        deposit_check(env, table.wager/2, table.wager/2);
+        deposit_check(&env, table.wager/2, table.wager/2);
 
 
         //Dealer has blackjack
@@ -284,13 +299,13 @@ pub fn insure() {
         table.insurance_round == false;
 
             //Returns Game state
-            Ok(HandleResponse {
+            return Ok(HandleResponse {
                 messages: vec![],
                 log: vec![],
                 data: Some(to_binary(&HandleAnswer::Insure {
 
                 })?),
-            })
+            });
         }
     }
     else {
@@ -299,7 +314,18 @@ pub fn insure() {
 }
 
 //If insurance round is called, player is given option to pass up insurance
-pub fn dont_insure() {
+pub fn dont_insure(
+    deps: &mut Extern<S, A, Q>,
+    env: Env,
+) -> HandleResult {
+
+    //Load Table from sender waller address
+    let sender_raw = deps.api.canonical_address(&env.message.sender)?; //Grabs human address, turns it into cannonical address
+    let sender_key = sender_raw.as_slice(); //Makes address into a key that storage can understand
+    let mut table: Table = load(&deps.storage, sender_key)?; //Loads table from storage based on the sender_key from accessing wallet
+
+
+
     if table.insurance_round == true {
 
         //Dealer has blackjack
@@ -313,10 +339,10 @@ pub fn dont_insure() {
 
         //Dealer Didn't have blackjack
         else {
-        table.insurance_round == false;
+            table.insurance_round == false;
 
             //Returns Game state
-            Ok(HandleResponse {
+            return Ok(HandleResponse {
                 messages: vec![],
                 log: vec![],
                 data: Some(to_binary(&HandleAnswer::Insure {
@@ -332,7 +358,16 @@ pub fn dont_insure() {
 
 
 //Function for player that hits either his split hand or regular hand
-pub fn hit() {
+pub fn hit(
+    deps: &mut Extern<S, A, Q>,
+    env: Env,
+) -> HandleResult {
+
+
+    //Load Table from sender waller address
+    let sender_raw = deps.api.canonical_address(&env.message.sender)?; //Grabs human address, turns it into cannonical address
+    let sender_key = sender_raw.as_slice(); //Makes address into a key that storage can understand
+    let mut table: Table = load(&deps.storage, sender_key)?; //Loads table from storage based on the sender_key from accessing wallet
 
     //Check if insurance round needs to be resolved
     if table.insurance_round == true {
@@ -344,10 +379,10 @@ pub fn hit() {
     table.player.split_hand.stay == false &&
     table.player.split_hand.val < BLACKJACK  &&
     table.player.split_hand.contents.len() < CHARLIE {
-        table.player.split_hand.hit(card_draw());
+        table.player.split_hand.hit(card_draw(&env));
 
         //Returns last card in split hand and new split val
-        Ok(HandleResponse {
+        return Ok(HandleResponse {
             messages: vec![],
             log: vec![],
             data: Some(to_binary(&HandleAnswer::Hit {
@@ -366,10 +401,10 @@ pub fn hit() {
     else if table.player.hand.stay == false &&
     table.player.hand.val < BLACKJACK &&
     table.player.hand.contents.len() < CHARLIE {
-        table.player.hand.hit(card_draw());
+        table.player.hand.hit(card_draw(&env));
 
         //Returns last card in normal hand and new hand value
-        Ok(HandleResponse {
+        return Ok(HandleResponse {
             messages: vec![],
             log: vec![],
             data: Some(to_binary(&HandleAnswer::Hit {
@@ -378,7 +413,7 @@ pub fn hit() {
 
                 which_hand: false   //False means this came from normal hand
             })?),
-        })
+        });
 
         //If player main hand busts or reaches 21 or CHARLIE, call dealer turn
         if table.player.hand.val >= BLACKJACK ||
@@ -393,7 +428,16 @@ pub fn hit() {
 
 
 //Ends players turn
-pub fn stand() {
+pub fn stand(
+    deps: &mut Extern<S, A, Q>,
+    env: Env,
+) -> HandleResult {
+
+    //Load Table from sender waller address
+    let sender_raw = deps.api.canonical_address(&env.message.sender)?; //Grabs human address, turns it into cannonical address
+    let sender_key = sender_raw.as_slice(); //Makes address into a key that storage can understand
+    let mut table: Table = load(&deps.storage, sender_key)?; //Loads table from storage based on the sender_key from accessing wallet
+
 
     //Check if insurance round needs to be resolved
     if table.insurance_round == true {
@@ -416,7 +460,15 @@ pub fn stand() {
 
 
 //Player doubles bet and adds one card
-pub fn double_down() {
+pub fn double_down(
+    deps: &mut Extern<S, A, Q>,
+    env: Env,
+) -> HandleResult {
+
+    //Load Table from sender waller address
+    let sender_raw = deps.api.canonical_address(&env.message.sender)?; //Grabs human address, turns it into cannonical address
+    let sender_key = sender_raw.as_slice(); //Makes address into a key that storage can understand
+    let mut table: Table = load(&deps.storage, sender_key)?; //Loads table from storage based on the sender_key from accessing wallet
 
     //Check if insurance round needs to be resolved
     if table.insurance_round == true {
@@ -425,7 +477,7 @@ pub fn double_down() {
 
 
     //Checks if player sent the appropriate amount
-    deposit_check(env, table.wager, table.wager/2);
+    deposit_check(&env, table.wager, table.wager/2);
 
 
     else if table.player.hand.contents.len() == 2 {
@@ -441,7 +493,16 @@ pub fn double_down() {
 }
 
 
-pub fn split() {
+pub fn split(
+    deps: &mut Extern<S, A, Q>,
+    env: Env,
+) -> HandleResult {
+
+    //Load Table from sender waller address
+    let sender_raw = deps.api.canonical_address(&env.message.sender)?; //Grabs human address, turns it into cannonical address
+    let sender_key = sender_raw.as_slice(); //Makes address into a key that storage can understand
+    let mut table: Table = load(&deps.storage, sender_key)?; //Loads table from storage based on the sender_key from accessing wallet
+
 
     //Check if insurance round needs to be resolved
     if table.insurance_round == true {
@@ -463,12 +524,12 @@ pub fn split() {
         table.player.hand.val = card_value(table.player.hand.contents[0]);
 
         //Adds one card to each hand
-        table.player.split_hand.hit(card_draw());
-        table.player.hand.hit(card_draw());
+        table.player.split_hand.hit(card_draw(&env));
+        table.player.hand.hit(card_draw(&env));
 
 
         //Returns the value and contents of normal and split hands
-        Ok(HandleResponse {
+        return Ok(HandleResponse {
         messages: vec![],
         log: vec![],
         data: Some(to_binary(&HandleAnswer::Read {
@@ -494,7 +555,7 @@ fn dealer_turn() {
     //Dealer will stop on 18 and also 17 if he doesn't have an ace
     while (table.dealer.hand.val < DEALER_STOP) ||
     (table.dealer.hand.val <= DEALER_STOP && table.dealer.hand.ace == true) {
-        table.dealer.hand.hit(card_draw);
+        table.dealer.hand.hit(card_draw(&env));
     }
 
     end_round();
@@ -584,14 +645,31 @@ fn end_round() {
 
 
 
+//generates a random number between 0-51, returns a u8
+fn card_draw(env: &Env) -> u8 {
 
-//generates a random number between 1-52, returns a u8
-fn card_draw() -> u8 {
-    let random_seed: [u8; 32] = Sha256::digest(state.seed).into();
+    //Blends admin seed with blockheight and time (Later add player seed)
+    let entropy = state.seed;
+    entropy.extend_from_slice(&env.block.height.to_be_bytes());
+    entropy.extend_from_slice(&env.block.time.to_be_bytes());
+    entropy.extend_from_slice(&env.message.sender.0.as_bytes());
+
+    //Takes entropy blend and generates new seed
+    let mut random_seed: [u8; 32] = Sha256::digest(entropy).into();
+
+
     let mut rng = ChaChaRng::from_seed(random_seed);
 
-    return ((rng.next_u32() % 52) as u8); // a number between 0 and 51
+    let mut num = ((rng.next_u32() % 52) as u8); // a number between 0 and 51
 
+
+
+    //If num is on the edge of 32 bit numbers, retry (32 bit max not evenly divisible by 52)
+    while num >= 4294967248 {
+        num = ((rng.next_u32() % 52) as u8);
+    }
+
+    return num;
 }
 
 fn card_value(card: u8) -> u8 {

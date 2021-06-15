@@ -24,10 +24,10 @@ pub enum HandleMsg {
 #[serde(rename_all = "snake_case")]
 pub enum HandleAnswer {
     Open {
-        player_hand: Vec,
+        player_hand: Vec<u8>,
         player_val: u8,
 
-        dealer_hand: Vec,
+        dealer_hand: Vec<u8>,
         dealer_val: u8,
 
         insureable: bool,
@@ -40,10 +40,10 @@ pub enum HandleAnswer {
 
     },
     Split {
-        player_hand: Vec,
+        player_hand: Vec<u8>,
         player_val: u8,
 
-        split_hand: Vec,
+        split_hand: Vec<u8>,
         split_val: u8
     },
 
@@ -51,25 +51,11 @@ pub enum HandleAnswer {
 
     },
 
+
     Conclude {
-        dealer_hand: Vec,
+        dealer_hand: Vec<u8>,
         dealer_val: u8,
     },
 
 
-}
-
-
-
-
-
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum QueryMsg {
-
-}
-
-// We define a custom struct for each query response
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
-pub struct CountResponse {
 }
