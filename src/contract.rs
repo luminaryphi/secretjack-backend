@@ -1,5 +1,7 @@
+use std::env;
+
 //cosmwasm_std must be kept
-use cosmwasm_std::{Api, Binary, Env, Extern, HandleResponse, HandleResult, InitResponse, Querier, StdError, StdResult, Storage, to_binary};
+use cosmwasm_std::{Api, Binary, Env, Extern, HandleResponse, HandleResult, InitResponse, Querier, StdError, StdResult, Storage, Uint128, to_binary};
 
 use crate::msg::{CountResponse, HandleMsg, InitMsg, QueryMsg};
 use crate::state::{config, config_read, State};
@@ -42,7 +44,7 @@ pub const BLACKJACK:u8 = 21;
 
 //Payout Multiples
 pub const NAT_BLACK:f32 = 2.5;
-pub const NORM_PAY:f32 = 2;
+pub const NORM_PAY:u8 = 2;
 
 //Charlie victory constant
 pub const CHARLIE:u8 = 6;
@@ -167,7 +169,11 @@ impl Table {
 
 
 //Sending money to game check, ensures everything is correct for wagers/insurance/doubling down etc
-pub fn deposit_check(env: &Env, required_amount: u64, max_bet: u64) -> StdResult<u64> {
+pub fn deposit_check(
+    env: &Env, 
+    required_amount: u64, 
+    max_bet: u64
+) -> StdResult<u64> {
     let deposit: Uint128;
 
     if env.message.sent_funds.len() == 0 {
@@ -178,26 +184,38 @@ pub fn deposit_check(env: &Env, required_amount: u64, max_bet: u64) -> StdResult
         }
         deposit = env.message.sent_funds[0].amount;
 
-        if deposit.u128() as u64 < required_amount {
+        if deposit < required_amount {
             return Err(StdError::generic_err("NOT ENOUGH FUNDS SENT!"));
         }
-        if deposit.u128() as u64 > max_bet {
-            return Err(StdError::generic_err("YOU CAN'T WAGER THAT MUCH!"));
+        else if deposit > max_bet {
+            return Err(StdError::generic_err("YOU CAN'T WAGER THAT MUCH!"))
         }
     }
 
 }
 
 
-
-
+/// Returns StdResult<T> from retrieving the item with the specified key.  Returns a
+/// StdError::NotFound if there is no item with that key
+///
+/// # Arguments
+///
+/// * `storage` - a reference to the storage this item is in
+/// * `key` - a byte slice representing the key that accesses the stored item
+pub fn load<T: DeserializeOwned, S: ReadonlyStorage>(storage: &S, key: &[u8]) -> StdResult<T> {
+    Bincode2::deserialize(
+        &storage
+            .get(key)
+            .ok_or_else(|| StdError::not_found(type_name::<T>()))?,
+    )
+}
 
 
 
 
 //Player starts with initial bet
 //give player 2 cards, dealer recieves one card. Other is hidden
-pub fn start_round(
+pub fn start_round<S: Storage, A: Api, Q: Querier>(
     deps: &mut Extern<S, A, Q>,
     env: Env,
 ) -> HandleResult {
@@ -239,7 +257,7 @@ pub fn start_round(
 
 
     if table.player.hand.val == BLACKJACK && table.insurance_round == false {
-        end_round();
+        end_round(&table, &env)
     }
 
     else {
@@ -267,9 +285,9 @@ pub fn start_round(
 
 //Insurance Round. Can only be called if insurance_round == true
 //Player must pay in half his wager
-pub fn insure(
+pub fn insure<S: Storage, A: Api, Q: Querier>(
     deps: &mut Extern<S, A, Q>,
-    env: Env,
+    env: Env
 ) -> HandleResult {
 
     //Load Table from sender waller address
@@ -290,7 +308,7 @@ pub fn insure(
             //Shows secret card
             table.dealer.hand.hit(table.dealer.secret_card);
             //Player recieves a payment equal to his wager (TODO)
-            end_round();
+            end_round(&table, &env)
 
         }
 
@@ -313,10 +331,11 @@ pub fn insure(
     }
 }
 
+
 //If insurance round is called, player is given option to pass up insurance
-pub fn dont_insure(
+pub fn dont_insure<S: Storage, A: Api, Q: Querier>(
     deps: &mut Extern<S, A, Q>,
-    env: Env,
+    env: Env
 ) -> HandleResult {
 
     //Load Table from sender waller address
@@ -333,7 +352,7 @@ pub fn dont_insure(
             //Shows secret card
             table.dealer.hand.hit(table.dealer.secret_card);
             //Player recieves a payment equal to his wager ( TODO )
-            end_round();
+            end_round(&table, &env)
 
         }
 
@@ -358,7 +377,7 @@ pub fn dont_insure(
 
 
 //Function for player that hits either his split hand or regular hand
-pub fn hit(
+pub fn hit<S: Storage, A: Api, Q: Querier>(
     deps: &mut Extern<S, A, Q>,
     env: Env,
 ) -> HandleResult {
@@ -378,7 +397,7 @@ pub fn hit(
     else if table.player.did_split == true &&
     table.player.split_hand.stay == false &&
     table.player.split_hand.val < BLACKJACK  &&
-    table.player.split_hand.contents.len() < CHARLIE {
+    table.player.split_hand.contents.len() < CHARLIE as usize {
         table.player.split_hand.hit(card_draw(&env));
 
         //Returns last card in split hand and new split val
@@ -400,26 +419,31 @@ pub fn hit(
     }
     else if table.player.hand.stay == false &&
     table.player.hand.val < BLACKJACK &&
-    table.player.hand.contents.len() < CHARLIE {
+    table.player.hand.contents.len() < CHARLIE as usize {
+
         table.player.hand.hit(card_draw(&env));
 
-        //Returns last card in normal hand and new hand value
-        return Ok(HandleResponse {
-            messages: vec![],
-            log: vec![],
-            data: Some(to_binary(&HandleAnswer::Hit {
-                new_card: table.player.split_hand.contents[(table.player.split_hand.contents.len())-1],
-                new_val: table.player.split_hand.val,
-
-                which_hand: false   //False means this came from normal hand
-            })?),
-        });
 
         //If player main hand busts or reaches 21 or CHARLIE, call dealer turn
         if table.player.hand.val >= BLACKJACK ||
-        table.player.hand.contents.len() >= CHARLIE {
-            dealer_turn();
+        table.player.hand.contents.len() >= CHARLIE as usize {
+            dealer_turn(&table, &env)
         }
+
+        else {
+            //Returns last card in normal hand and new hand value
+            return Ok(HandleResponse {
+                messages: vec![],
+                log: vec![],
+                data: Some(to_binary(&HandleAnswer::Hit {
+                    new_card: table.player.split_hand.contents[(table.player.split_hand.contents.len())-1],
+                    new_val: table.player.split_hand.val,
+
+                    which_hand: false   //False means this came from normal hand
+                })?),
+            })
+        }
+
 
     }
 
@@ -428,7 +452,7 @@ pub fn hit(
 
 
 //Ends players turn
-pub fn stand(
+pub fn stand<S: Storage, A: Api, Q: Querier>(
     deps: &mut Extern<S, A, Q>,
     env: Env,
 ) -> HandleResult {
@@ -452,7 +476,7 @@ pub fn stand(
     //If player is using normal hand, move to dealer turn
     else {
         table.player.hand.stay = true;
-        dealer_turn();
+        dealer_turn(&table, &env)
     }
 
 
@@ -460,7 +484,7 @@ pub fn stand(
 
 
 //Player doubles bet and adds one card
-pub fn double_down(
+pub fn double_down<S: Storage, A: Api, Q: Querier>(
     deps: &mut Extern<S, A, Q>,
     env: Env,
 ) -> HandleResult {
@@ -472,7 +496,7 @@ pub fn double_down(
 
     //Check if insurance round needs to be resolved
     if table.insurance_round == true {
-        return Err(StdError::generic_err("INSURANCE ROUND MUST BE RESOLVED!"));
+        return Err(StdError::generic_err("INSURANCE ROUND MUST BE RESOLVED!"))
     }
 
 
@@ -488,12 +512,12 @@ pub fn double_down(
     }
 
     else {
-        return Err(StdError::generic_err("YOU CAN'T DOUBLE DOWN NOW!"));
+        return Err(StdError::generic_err("YOU CAN'T DOUBLE DOWN NOW!"))
     }
 }
 
 
-pub fn split(
+pub fn split<S: Storage, A: Api, Q: Querier>(
     deps: &mut Extern<S, A, Q>,
     env: Env,
 ) -> HandleResult {
@@ -506,7 +530,7 @@ pub fn split(
 
     //Check if insurance round needs to be resolved
     if table.insurance_round == true {
-        return Err(StdError::generic_err("INSURANCE ROUND MUST BE RESOLVED!"));
+        return Err(StdError::generic_err("INSURANCE ROUND MUST BE RESOLVED!"))
     }
 
 
@@ -548,7 +572,13 @@ pub fn split(
 
 
 //Dealer takes turn
-fn dealer_turn() {
+fn dealer_turn
+    (table: &Table,
+    env: &Env
+) -> HandleResult {
+
+
+
     //Secret card is moved into dealers hand
     table.dealer.hand.hit(table.dealer.secret_card);
 
@@ -558,12 +588,15 @@ fn dealer_turn() {
         table.dealer.hand.hit(card_draw(&env));
     }
 
-    end_round();
+    end_round(&table, &env)
 }
 
 
 
-fn end_round() {
+fn end_round
+    (table: &Table,
+    env: &Env
+) -> HandleResult {
 
 
 
@@ -588,7 +621,7 @@ fn end_round() {
 
     //Non blackjack wins count. Winning hands used as a multiple for winnings if player split
     else {
-        let mut wining_hands: u8 = 0;
+        let mut winning_hands: u8 = 0;
 
         //Split hand win > dealer and not bust or dealer bust and player didn't
         if (table.player.did_split == true &&                           //Player Hand > Dealer Hand Win
@@ -597,7 +630,7 @@ fn end_round() {
             (table.dealer.hand.val > BLACKJACK &&                       //Dealer Bust / Player Didn't Win
             table.player.split_hand.val <= BLACKJACK) ||
             (table.player.split_hand.val <= BLACKJACK &&                //CHARLIE Win
-            table.player.split_hand.contents.len() >= CHARLIE) {
+            table.player.split_hand.contents.len() >= CHARLIE as usize) {
                     winning_hands += 1;
         }
 
@@ -608,7 +641,7 @@ fn end_round() {
             (table.dealer.hand.val > BLACKJACK &&               //Dealer Bust / Player Didn't Win
              table.player.hand.val <= BLACKJACK) ||
              (table.player.hand.val <= BLACKJACK &&             //CHARLIE Win
-             table.player.hand.contents.len() >= CHARLIE) {
+             table.player.hand.contents.len() >= CHARLIE as usize) {
                 winning_hands += 1;
             }
 
@@ -635,8 +668,8 @@ fn end_round() {
     messages: vec![],
     log: vec![],
     data: Some(to_binary(&HandleAnswer::Conclude {
-        dealer_hand: table.dealer.hand,
-        dealer_val: table.dealer.val,
+        dealer_hand: table.dealer.hand.contents,
+        dealer_val: table.dealer.hand.val,
 
         })?),
     })
@@ -646,7 +679,10 @@ fn end_round() {
 
 
 //generates a random number between 0-51, returns a u8
-fn card_draw(env: &Env) -> u8 {
+fn card_draw
+    (env: &Env,
+    
+) -> u8 {
 
     //Blends admin seed with blockheight and time (Later add player seed)
     let entropy = state.seed;
